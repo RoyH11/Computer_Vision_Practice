@@ -1,0 +1,144 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
+
+# Hyperparameters
+BATCH_SIZE = 64
+NOISE_DIM = 100
+NUM_EPOCHS = 100
+LEARNING_RATE = 2e-4
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Data Preparation
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,))
+])
+train_dataset = datasets.MNIST(root='./data', train=True, transform=transform, download=True)
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+# Generator
+class Generator(nn.Module):
+    def __init__(self, noise_dim=NOISE_DIM): 
+        super(Generator, self).__init__()
+        self.main = nn.Sequential(
+            nn.Linear(noise_dim, 256),
+            nn.LeakyReLU(0.2),
+            nn.Linear(256, 512),
+            nn.LeakyReLU(0.2),
+            nn.Linear(512, 1024),
+            nn.LeakyReLU(0.2),
+            nn.Linear(1024, 28*28),
+            nn.Tanh()
+        )
+
+    def forward(self, x):
+        x = self.main(x)
+        return x.view(-1, 1, 28, 28)
+    
+'''
+# Discriminator
+class Discriminator(nn.Module): 
+    def __init__(self): 
+        super(Discriminator, self).__init__()
+        self.main = nn.Sequential(
+            nn.Linear(28*28, 1024),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.3),
+            nn.Linear(1024, 512),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.3),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.3),
+            nn.Linear(256, 1),
+            nn.Sigmoid()
+        )
+        '''
+# Discriminator
+class Discriminator(nn.Module):
+    def __init__(self):
+        super(Discriminator, self).__init__()
+        self.main = nn.Sequential(
+            nn.Linear(28*28, 1024),
+            nn.LeakyReLU(0.2),
+            nn.Linear(1024, 512),
+            nn.LeakyReLU(0.2),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.2),
+            nn.Linear(256, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        x = x.view(x.size(0), -1)
+        return self.main(x)
+    
+# Initialize models
+generator = Generator(NOISE_DIM).to(DEVICE)
+discriminator = Discriminator().to(DEVICE)
+
+# Loss and optimizer
+criterion = nn.BCELoss()
+g_optimizer = optim.Adam(generator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
+d_optimizer = optim.Adam(discriminator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
+
+# Training
+for epoch in range(NUM_EPOCHS):
+    for i, (real_images, _) in enumerate(train_loader):
+        # Train Discriminator
+        real_images = real_images.to(DEVICE)
+        real_labels = torch.ones(real_images.size(0), 1).to(DEVICE)
+        fake_labels = torch.zeros(real_images.size(0), 1).to(DEVICE)
+
+        # Real images
+        real_outputs = discriminator(real_images)
+        d_loss_real = criterion(real_outputs, real_labels)
+
+        # Fake images
+        noise = torch.randn(real_images.size(0), NOISE_DIM).to(DEVICE)
+        fake_images = generator(noise)
+        fake_outputs = discriminator(fake_images)
+        d_loss_fake = criterion(fake_outputs, fake_labels)
+
+        # Backprop and optimize
+        d_loss = d_loss_real + d_loss_fake
+        d_optimizer.zero_grad()
+        d_loss.backward()
+        d_optimizer.step()
+
+        # Train Generator
+        noise = torch.randn(real_images.size(0), NOISE_DIM).to(DEVICE)
+        fake_images = generator(noise)
+        outputs = discriminator(fake_images)
+        g_loss = criterion(outputs, real_labels)
+
+        # Backprop and optimize
+        g_optimizer.zero_grad()
+        g_loss.backward()
+        g_optimizer.step()
+
+    # Logging for every epoch
+    print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], d_loss: {d_loss:.4f}, g_loss: {g_loss:.4f}")
+
+    # Generate images for every 10 epochs
+    if (epoch+1) % 10 == 0:
+        noise = torch.randn(16, NOISE_DIM).to(DEVICE)
+        generated_images = generator(noise).cpu().detach()
+        plt.figure(figsize=(4, 4))
+        for i in range(16):
+            plt.subplot(4, 4, i+1)
+            plt.imshow(generated_images[i].view(28, 28), cmap='gray')
+            plt.axis('off')
+        plt.tight_layout()
+        plt.show()
+
+print("Training is finished")
+
+# Save models
+torch.save(generator.state_dict(), 'generator.pth')
+torch.save(discriminator.state_dict(), 'discriminator.pth')
+
